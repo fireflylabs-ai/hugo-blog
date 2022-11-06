@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Posts on Ryan&#39;s Blog</title>
+    <link>https://blog.fireflylabs.ai/posts/</link>
+    <description>Recent content in Posts on Ryan&#39;s Blog</description>
+    <generator>Hugo -- gohugo.io</generator>
+    <language>en-US</language>
+    <lastBuildDate>Mon, 17 Oct 2022 20:13:03 +0000</lastBuildDate>
+    
+	<atom:link href="https://blog.fireflylabs.ai/posts/index.xml" rel="self" type="application/rss+xml" />
+    
+    
+    
+    <item>
+      <title>Coral Passthrough to Proxmox LXC</title>
+      <link>https://blog.fireflylabs.ai/coral-passthrough-to-proxmox-lxc/</link>
+      <pubDate>Mon, 17 Oct 2022 20:13:03 +0000</pubDate>
+      
+      <guid>https://blog.fireflylabs.ai/coral-passthrough-to-proxmox-lxc/</guid>
+      <description>&lt;h2 id=&#34;overview&#34;&gt;Overview&lt;/h2&gt;
+&lt;p&gt;In this article, I&amp;rsquo;ll show you a quick and easy way to pass through a Google Coral USB Accelerator resource into an LXC container. This is useful if using detection in Frigate NVR or any other TensorFlow AI modeling.&lt;/p&gt;
+&lt;h2 id=&#34;prerequisites--assumptions&#34;&gt;Prerequisites &amp;amp; Assumptions&lt;/h2&gt;
+&lt;p&gt;This process assumes:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;You have an operational Proxmox &amp;amp; LXC setup running already. In this scenario, I&amp;rsquo;m using Ubuntu 22.04&lt;/li&gt;
+&lt;li&gt;You understand common LXC terminology and can access the LXC command line interface in your container&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;environment-details&#34;&gt;Environment Details&lt;/h2&gt;
+&lt;p&gt;Proxmox Info:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-shell&#34; data-lang=&#34;shell&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;root@pve04:~# pveversion -v
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;proxmox-ve: 7.2-1 &lt;span class=&#34;o&#34;&gt;(&lt;/span&gt;running kernel: 5.15.60-2-pve&lt;span class=&#34;o&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;pve-manager: 7.2-11 &lt;span class=&#34;o&#34;&gt;(&lt;/span&gt;running version: 7.2-11/b76d3178&lt;span class=&#34;o&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Additionally, a Google Coral USB plugged into a USB 3.0 port.&lt;/p&gt;
+&lt;h2 id=&#34;requirements&#34;&gt;Requirements&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;You must pass the entire bus on which the Coral USB is running. You cannot only pass a single port when using Coral USB.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Note that your bus id/port will change after the Coral USB initializes.&lt;/p&gt;
+&lt;p&gt;For example, it will start as this in &lt;code&gt;lsusb&lt;/code&gt;:&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;Bus 002 Device 002: ID 1a6e:089a Global Unichip Corp.&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;And end up as:&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;Bus 002 Device 003: ID 18d1:9302 Google Inc.&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;process&#34;&gt;Process&lt;/h2&gt;
+&lt;p&gt;The process to get this running is simple:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;Create your CT on the host&lt;/p&gt;
+&lt;p&gt;Create a CT via Ubuntu 22.04 Template, and do not yet boot it. Config should look like this:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-shell&#34; data-lang=&#34;shell&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;root@pve04:~# cat /etc/pve/lxc/3004.conf
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;arch: amd64
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;cores: &lt;span class=&#34;m&#34;&gt;8&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;features: &lt;span class=&#34;nv&#34;&gt;nesting&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;&lt;span class=&#34;m&#34;&gt;1&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;hostname: myubuntulxc
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;memory: &lt;span class=&#34;m&#34;&gt;16384&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;nameserver: 10.1.10.2 10.1.10.3
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;net0: &lt;span class=&#34;nv&#34;&gt;name&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;eth0,bridge&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;vmbr10,gw&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;10.1.10.1,hwaddr&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;D2:44:DD:EE:7F:B5,ip&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;10.1.10.64/24,type&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;veth
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;ostype: ubuntu
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;rootfs: lvm-thin-local:vm-3004-disk-0,size&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;16G
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;searchdomain: lan
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;swap: &lt;span class=&#34;m&#34;&gt;0&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;blockquote&gt;
+&lt;p&gt;NOTE: Some details may be different for your network configuration, storage config, etc&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Obtain USB bus info:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-shell&#34; data-lang=&#34;shell&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;root@pve05:~# lsusb
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Bus &lt;span class=&#34;m&#34;&gt;002&lt;/span&gt; Device 002: ID 1a6e:089a Global Unichip Corp.
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Bus &lt;span class=&#34;m&#34;&gt;002&lt;/span&gt; Device 001: ID 1d6b:0003 Linux Foundation 3.0 root hub
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;In this case, you can see we are on USB Bus 002.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;You will need to add the following LXC configuration options, matching &lt;code&gt;002&lt;/code&gt; references in &lt;code&gt;lxc.mount.entry&lt;/code&gt; with the bus ID you obtained in step 2:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-shell&#34; data-lang=&#34;shell&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.apparmor.profile: unconfined
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.cgroup2.devices.allow: a
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.cap.drop: 
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.mount.auto: cgroup:rw
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.cgroup2.devices.allow: c 189:* rwm
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.mount.entry: /dev/bus/usb/002 dev/bus/usb/002 none bind,optional,create&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;dir 0, &lt;span class=&#34;m&#34;&gt;0&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Now your Coral USB is available at &lt;code&gt;/dev/bus/usb/002&lt;/code&gt; inside your CT!&lt;/p&gt;
+</description>
+    </item>
+    
+    
+    
+    <item>
+      <title>GPU Passthrough to Proxmox LXC</title>
+      <link>https://blog.fireflylabs.ai/gpu-passthrough-to-proxmox-lxc/</link>
+      <pubDate>Mon, 17 Oct 2022 18:46:25 +0000</pubDate>
+      
+      <guid>https://blog.fireflylabs.ai/gpu-passthrough-to-proxmox-lxc/</guid>
+      <description>&lt;h2 id=&#34;overview&#34;&gt;Overview&lt;/h2&gt;
+&lt;p&gt;In this article, I&amp;rsquo;ll show you a quick and easy way to pass through Intel iGPU resources into an LXC container. This is useful if using Plex, Frigate, Jellyfin, etc inside LXC on Proxmox.&lt;/p&gt;
+&lt;h2 id=&#34;prerequisites--assumptions&#34;&gt;Prerequisites &amp;amp; Assumptions&lt;/h2&gt;
+&lt;p&gt;This process assumes:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;You have an operational Proxmox &amp;amp; LXC setup running already. In this scenario, I&amp;rsquo;m using Ubuntu 22.04&lt;/li&gt;
+&lt;li&gt;You understand common LXC terminology and can access the LXC command line interface in your container&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;environment-details&#34;&gt;Environment Details&lt;/h2&gt;
+&lt;p&gt;CPUs tested:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz (1 Socket) - &lt;code&gt;HD Graphics 630&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Intel(R) Core(TM) i7-4790 CPU @ 3.60GHz (1 Socket) - &lt;code&gt;Xeon E3-1200 v3/4th Gen Core Processor Integrated Graphics Controller&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Proxmox Info:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-shell&#34; data-lang=&#34;shell&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;root@pve04:~# pveversion -v
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;proxmox-ve: 7.2-1 &lt;span class=&#34;o&#34;&gt;(&lt;/span&gt;running kernel: 5.15.60-2-pve&lt;span class=&#34;o&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;pve-manager: 7.2-11 &lt;span class=&#34;o&#34;&gt;(&lt;/span&gt;running version: 7.2-11/b76d3178&lt;span class=&#34;o&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h2 id=&#34;process&#34;&gt;Process&lt;/h2&gt;
+&lt;p&gt;I&amp;rsquo;ll break this information down into two pieces - things you need to do on the host, and an optional step you can do inside the LXC &amp;ldquo;guest&amp;rdquo;.&lt;/p&gt;
+&lt;h3 id=&#34;host&#34;&gt;Host&lt;/h3&gt;
+&lt;p&gt;Update &lt;code&gt;apt&lt;/code&gt;&amp;rsquo;s cache, and install &lt;code&gt;va-drivers-all&lt;/code&gt; and &lt;code&gt;vainfo&lt;/code&gt;:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;apt update &lt;span class=&#34;o&#34;&gt;&amp;amp;&amp;amp;&lt;/span&gt; apt install -y va-drivers-all vainfo
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Update &lt;code&gt;grub&lt;/code&gt;:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;update-grub
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;update-initramfs -u
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Finally, reboot for changes to take effect:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;reboot
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;After reboot, &lt;code&gt;vainfo&lt;/code&gt; should show proper GPU details:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-shell&#34; data-lang=&#34;shell&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;root@pve04:~# vainfo
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;error: XDG_RUNTIME_DIR not &lt;span class=&#34;nb&#34;&gt;set&lt;/span&gt; in the environment.
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;error: can&lt;span class=&#34;err&#34;&gt;&amp;#39;&lt;/span&gt;t connect to X server!
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;libva info: VA-API version 1.10.0
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;libva info: Trying to open /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;libva info: Found init &lt;span class=&#34;k&#34;&gt;function&lt;/span&gt; __vaDriverInit_1_10
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;libva info: va_openDriver&lt;span class=&#34;o&#34;&gt;()&lt;/span&gt; returns &lt;span class=&#34;m&#34;&gt;0&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;vainfo: VA-API version: 1.10 &lt;span class=&#34;o&#34;&gt;(&lt;/span&gt;libva 2.10.0&lt;span class=&#34;o&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;vainfo: Driver version: Intel iHD driver &lt;span class=&#34;k&#34;&gt;for&lt;/span&gt; Intel&lt;span class=&#34;o&#34;&gt;(&lt;/span&gt;R&lt;span class=&#34;o&#34;&gt;)&lt;/span&gt; Gen Graphics - 21.1.1 &lt;span class=&#34;o&#34;&gt;()&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;vainfo: Supported profile and entrypoints
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileMPEG2Simple            : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileMPEG2Main              : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264Main               : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264Main               : VAEntrypointEncSliceLP
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264High               : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264High               : VAEntrypointEncSliceLP
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileJPEGBaseline           : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileJPEGBaseline           : VAEntrypointEncPicture
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264ConstrainedBaseline: VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264ConstrainedBaseline: VAEntrypointEncSliceLP
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileVP8Version0_3          : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileHEVCMain               : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileHEVCMain10             : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileVP9Profile0            : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileVP9Profile2            : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;blockquote&gt;
+&lt;p&gt;NOTE: Your output may differ based on your iGPU&amp;rsquo;s capabilities. This output is from the i7 7700, which supports &lt;code&gt;iHD&lt;/code&gt; driver (instead of the less-capabale &lt;code&gt;i965&lt;/code&gt; or &lt;code&gt;i915&lt;/code&gt; driver). This is entirely controlled by your iGPU&amp;rsquo;s capabilities and generation.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;ct-creation-on-host&#34;&gt;CT Creation on Host&lt;/h3&gt;
+&lt;p&gt;Create a CT via Ubuntu 22.04 Template, and do not yet boot it. Config should look like this:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-shell&#34; data-lang=&#34;shell&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;root@pve04:~# cat /etc/pve/lxc/3004.conf
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;arch: amd64
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;cores: &lt;span class=&#34;m&#34;&gt;8&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;features: &lt;span class=&#34;nv&#34;&gt;nesting&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;&lt;span class=&#34;m&#34;&gt;1&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;hostname: myubuntulxc
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;memory: &lt;span class=&#34;m&#34;&gt;16384&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;nameserver: 10.1.10.2 10.1.10.3
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;net0: &lt;span class=&#34;nv&#34;&gt;name&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;eth0,bridge&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;vmbr10,gw&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;10.1.10.1,hwaddr&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;D2:44:DD:EE:7F:B5,ip&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;10.1.10.64/24,type&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;veth
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;ostype: ubuntu
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;rootfs: lvm-thin-local:vm-3004-disk-0,size&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;16G
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;searchdomain: lan
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;swap: &lt;span class=&#34;m&#34;&gt;0&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;blockquote&gt;
+&lt;p&gt;NOTE: Some details may be different for your network configuration, storage config, etc&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;You will need to add the following LXC configuration options:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-shell&#34; data-lang=&#34;shell&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.apparmor.profile: unconfined
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.cgroup.devices.allow: a
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.cap.drop: 
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.mount.auto: &lt;span class=&#34;s2&#34;&gt;&amp;#34;proc:rw sys:rw&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.cgroup2.devices.allow: c 226:0 rwm
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.cgroup2.devices.allow: c 226:128 rwm
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.cgroup2.devices.allow: c 29:0 rwm
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.mount.entry: /dev/dri dev/dri none bind,optional,create&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;dir
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;lxc.mount.entry: /dev/fb0 dev/fb0 none bind,optional,create&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;file
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h3 id=&#34;inside-ct-guest&#34;&gt;Inside CT &amp;ldquo;guest&amp;rdquo;&lt;/h3&gt;
+&lt;p&gt;Boot your new LXC container, and grab a terminal nside the lxc container and run the following:&lt;/p&gt;
+&lt;p&gt;Update &lt;code&gt;apt&lt;/code&gt;&amp;rsquo;s cache, and install &lt;code&gt;vainfo&lt;/code&gt;:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;apt update &lt;span class=&#34;o&#34;&gt;&amp;amp;&amp;amp;&lt;/span&gt; apt install -y vainfo
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Now you can view the output of &lt;code&gt;vainfo&lt;/code&gt; as you did on the host to confirm the guest has full control over the Intel GPU:&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-shell&#34; data-lang=&#34;shell&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;root@myubuntulxc:~# vainfo
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;error: can&lt;span class=&#34;err&#34;&gt;&amp;#39;&lt;/span&gt;t connect to X server!
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;libva info: VA-API version 1.14.0
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;libva info: Trying to open /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;libva info: Found init &lt;span class=&#34;k&#34;&gt;function&lt;/span&gt; __vaDriverInit_1_14
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;libva info: va_openDriver&lt;span class=&#34;o&#34;&gt;()&lt;/span&gt; returns &lt;span class=&#34;m&#34;&gt;0&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;vainfo: VA-API version: 1.14 &lt;span class=&#34;o&#34;&gt;(&lt;/span&gt;libva 2.12.0&lt;span class=&#34;o&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;vainfo: Driver version: Intel iHD driver &lt;span class=&#34;k&#34;&gt;for&lt;/span&gt; Intel&lt;span class=&#34;o&#34;&gt;(&lt;/span&gt;R&lt;span class=&#34;o&#34;&gt;)&lt;/span&gt; Gen Graphics - 22.3.1 &lt;span class=&#34;o&#34;&gt;()&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;vainfo: Supported profile and entrypoints
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileMPEG2Simple            : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileMPEG2Main              : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264Main               : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264Main               : VAEntrypointEncSliceLP
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264High               : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264High               : VAEntrypointEncSliceLP
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileJPEGBaseline           : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileJPEGBaseline           : VAEntrypointEncPicture
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264ConstrainedBaseline: VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileH264ConstrainedBaseline: VAEntrypointEncSliceLP
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileVP8Version0_3          : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileHEVCMain               : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileHEVCMain10             : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileVP9Profile0            : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      VAProfileVP9Profile2            : VAEntrypointVLD
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;blockquote&gt;
+&lt;p&gt;NOTE: you can also run tools like &lt;code&gt;intel_gpu_top&lt;/code&gt; (from the &lt;code&gt;intel-gpu-tools&lt;/code&gt; package) to view real-time GPU usage, similar to what Nvidia provides with &lt;code&gt;nvidia-smi&lt;/code&gt;.&lt;/p&gt;
+&lt;/blockquote&gt;
+</description>
+    </item>
+    
+    
+  </channel>
+</rss>

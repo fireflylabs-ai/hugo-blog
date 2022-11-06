@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Your site description">
+    
+    <link rel="shortcut icon" href="https://blog.fireflylabs.ai/favicon.ico">
+    
+    <link rel="stylesheet" href="/css/style.min.css">
+
+    <link rel="canonical" href="https://blog.fireflylabs.ai/coral-passthrough-to-proxmox-lxc/" />
+    <title>Coral Passthrough to Proxmox LXC</title>
+</head>
+<body><header id="banner">
+    <h2><a href="https://blog.fireflylabs.ai">Ryan&#39;s Blog</a></h2>
+    <nav>
+        <ul>
+            <li>
+                <a href="/" title="posts">posts</a>
+            </li>
+        </ul>
+    </nav>
+</header>
+<main id="content">
+<article>
+    <header id="post-header">
+        <h1>Coral Passthrough to Proxmox LXC</h1>
+        <div>
+                <time>October 17, 2022</time>
+            </div>
+    </header><h2 id="overview">Overview</h2>
+<p>In this article, I&rsquo;ll show you a quick and easy way to pass through a Google Coral USB Accelerator resource into an LXC container. This is useful if using detection in Frigate NVR or any other TensorFlow AI modeling.</p>
+<h2 id="prerequisites--assumptions">Prerequisites &amp; Assumptions</h2>
+<p>This process assumes:</p>
+<ul>
+<li>You have an operational Proxmox &amp; LXC setup running already. In this scenario, I&rsquo;m using Ubuntu 22.04</li>
+<li>You understand common LXC terminology and can access the LXC command line interface in your container</li>
+</ul>
+<h2 id="environment-details">Environment Details</h2>
+<p>Proxmox Info:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-shell" data-lang="shell"><span class="line"><span class="cl">root@pve04:~# pveversion -v
+</span></span><span class="line"><span class="cl">proxmox-ve: 7.2-1 <span class="o">(</span>running kernel: 5.15.60-2-pve<span class="o">)</span>
+</span></span><span class="line"><span class="cl">pve-manager: 7.2-11 <span class="o">(</span>running version: 7.2-11/b76d3178<span class="o">)</span>
+</span></span></code></pre></div><p>Additionally, a Google Coral USB plugged into a USB 3.0 port.</p>
+<h2 id="requirements">Requirements</h2>
+<ul>
+<li>
+<p>You must pass the entire bus on which the Coral USB is running. You cannot only pass a single port when using Coral USB.</p>
+</li>
+<li>
+<p>Note that your bus id/port will change after the Coral USB initializes.</p>
+<p>For example, it will start as this in <code>lsusb</code>:</p>
+<p><code>Bus 002 Device 002: ID 1a6e:089a Global Unichip Corp.</code></p>
+<p>And end up as:</p>
+<p><code>Bus 002 Device 003: ID 18d1:9302 Google Inc.</code></p>
+</li>
+</ul>
+<h2 id="process">Process</h2>
+<p>The process to get this running is simple:</p>
+<ol>
+<li>
+<p>Create your CT on the host</p>
+<p>Create a CT via Ubuntu 22.04 Template, and do not yet boot it. Config should look like this:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-shell" data-lang="shell"><span class="line"><span class="cl">root@pve04:~# cat /etc/pve/lxc/3004.conf
+</span></span><span class="line"><span class="cl">arch: amd64
+</span></span><span class="line"><span class="cl">cores: <span class="m">8</span>
+</span></span><span class="line"><span class="cl">features: <span class="nv">nesting</span><span class="o">=</span><span class="m">1</span>
+</span></span><span class="line"><span class="cl">hostname: myubuntulxc
+</span></span><span class="line"><span class="cl">memory: <span class="m">16384</span>
+</span></span><span class="line"><span class="cl">nameserver: 10.1.10.2 10.1.10.3
+</span></span><span class="line"><span class="cl">net0: <span class="nv">name</span><span class="o">=</span>eth0,bridge<span class="o">=</span>vmbr10,gw<span class="o">=</span>10.1.10.1,hwaddr<span class="o">=</span>D2:44:DD:EE:7F:B5,ip<span class="o">=</span>10.1.10.64/24,type<span class="o">=</span>veth
+</span></span><span class="line"><span class="cl">ostype: ubuntu
+</span></span><span class="line"><span class="cl">rootfs: lvm-thin-local:vm-3004-disk-0,size<span class="o">=</span>16G
+</span></span><span class="line"><span class="cl">searchdomain: lan
+</span></span><span class="line"><span class="cl">swap: <span class="m">0</span>
+</span></span></code></pre></div><blockquote>
+<p>NOTE: Some details may be different for your network configuration, storage config, etc</p>
+</blockquote>
+</li>
+<li>
+<p>Obtain USB bus info:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-shell" data-lang="shell"><span class="line"><span class="cl">root@pve05:~# lsusb
+</span></span><span class="line"><span class="cl">Bus <span class="m">002</span> Device 002: ID 1a6e:089a Global Unichip Corp.
+</span></span><span class="line"><span class="cl">Bus <span class="m">002</span> Device 001: ID 1d6b:0003 Linux Foundation 3.0 root hub
+</span></span></code></pre></div><p>In this case, you can see we are on USB Bus 002.</p>
+</li>
+<li>
+<p>You will need to add the following LXC configuration options, matching <code>002</code> references in <code>lxc.mount.entry</code> with the bus ID you obtained in step 2:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-shell" data-lang="shell"><span class="line"><span class="cl">lxc.apparmor.profile: unconfined
+</span></span><span class="line"><span class="cl">lxc.cgroup2.devices.allow: a
+</span></span><span class="line"><span class="cl">lxc.cap.drop: 
+</span></span><span class="line"><span class="cl">lxc.mount.auto: cgroup:rw
+</span></span><span class="line"><span class="cl">lxc.cgroup2.devices.allow: c 189:* rwm
+</span></span><span class="line"><span class="cl">lxc.mount.entry: /dev/bus/usb/002 dev/bus/usb/002 none bind,optional,create<span class="o">=</span>dir 0, <span class="m">0</span>
+</span></span></code></pre></div></li>
+</ol>
+<p>Now your Coral USB is available at <code>/dev/bus/usb/002</code> inside your CT!</p>
+</article>
+
+        </main><footer id="footer">
+    Copyright © 2022 Firefly Labs
+</footer>
+</body>
+</html>
